@@ -1,7 +1,8 @@
 // FORCE PRODUCTION DEFAULT
 export const RENTRI_ENV = process.env.RENTRI_ENV || 'PRODUCTION';
 
-const PROD_URL = 'https://api.rentri.gov.it'; 
+// CORRECTED PROD URL FOR FORMULARI (FIR)
+const PROD_URL = 'https://api.rentri.gov.it/formulari/v1.0'; 
 const TEST_URL = 'https://rentri.gov.it/test/api/v1';
 
 // Use PROD_URL by default unless env is explicitly SANDBOX

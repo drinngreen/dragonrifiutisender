@@ -22,11 +22,14 @@ export class RentriService {
         }
 
         const client = getRentriClient(company as CompanyKey);
-        const endpoint = '/fir/emissione'; 
+        
+        // CORRECTED ENDPOINT: Relative to /formulari/v1.0
+        // Usually /emissione or just /
+        // Let's assume /emissione based on context, but if base is specific, maybe just /
+        const endpoint = '/emissione'; 
         
         console.log(`[RentriService] SENDING REAL XML to ${client.defaults.baseURL}${endpoint}`);
         
-        // DEBUG HEADERS
         const headers = {
             'Agid-JWT-Signature': agidSignature,
             'Content-Type': 'application/xml',
@@ -35,8 +38,7 @@ export class RentriService {
         
         console.log(`[RentriService] Request Headers Debug:`);
         console.log(`- Agid-JWT-Signature Length: ${headers['Agid-JWT-Signature'].length}`);
-        console.log(`- Content-Type: ${headers['Content-Type']}`);
-
+        
         try {
             const response = await client.post(endpoint, xmlContent, { headers });
             console.log(`[RentriService] SUCCESS: ${response.status}`, response.data);
