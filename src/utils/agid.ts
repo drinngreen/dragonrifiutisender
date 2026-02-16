@@ -1,12 +1,11 @@
 import crypto from 'crypto';
 import fs from 'fs';
-import forge from 'node-forge';
+import { execSync } from 'child_process';
 import { RENTRI_CONFIG, CompanyKey } from '../config';
 
 /**
  * Generates an Agid-JWT-Signature in JWS Detached format.
- * Uses node-forge to safely extract private key from P12/PFX,
- * bypassing Node.js native crypto PFX limitations.
+ * Uses OpenSSL CLI to extract Private Key from PFX, bypassing Node/Crypto PFX limitations.
  */
 export function signAgidPayload(payload: string, company: CompanyKey): string {
     const config = RENTRI_CONFIG[company];
@@ -25,45 +24,54 @@ export function signAgidPayload(payload: string, company: CompanyKey): string {
         throw new Error(`Certificate password missing for ${company}. Set RENTRI_CERT_PASS_${company.toUpperCase()}`);
     }
 
-    // 1. Extract Private Key using node-forge (Robust Method)
+    // 1. Extract Private Key using OpenSSL CLI (Robust Method)
+    // We create temporary files in /tmp/ (Render standard)
+    const uniqueId = Date.now().toString() + Math.random().toString().slice(2,6);
+    const tempPassPath = `/tmp/pass_${uniqueId}.txt`;
+    const tempKeyPath = `/tmp/key_${uniqueId}.pem`;
+
     let privateKeyPem: string;
+
     try {
-        console.log(`[AgidSigner] Loading P12 via Forge from ${certPath}`);
+        console.log(`[AgidSigner] Extracting Private Key via OpenSSL CLI from ${certPath}`);
         
-        // Read file as binary string for forge
-        const p12Der = fs.readFileSync(certPath, 'binary');
-        const p12Asn1 = forge.asn1.fromDer(p12Der);
+        // Write password to temp file (secure)
+        fs.writeFileSync(tempPassPath, certPass);
+
+        // Run OpenSSL to extract private key without encryption (-nodes)
+        // Command: openssl pkcs12 -in P12 -nocerts -out KEY -nodes -passin file:PASS
+        // Use -legacy if needed for older P12 algorithms (RC2/3DES) on OpenSSL 3
+        const legacyFlag = process.version.startsWith('v17') || process.version.startsWith('v18') || process.version.startsWith('v20') ? '-legacy' : '';
         
-        // Decrypt P12
-        const p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, certPass);
+        execSync(`openssl pkcs12 -in "${certPath}" -nocerts -out "${tempKeyPath}" -nodes -passin file:"${tempPassPath}" ${legacyFlag}`);
         
-        // Get Key Bags
-        const bags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag });
-        let keyBag = bags[forge.pki.oids.pkcs8ShroudedKeyBag]?.[0];
-
-        // Fallback to non-shrouded key bag if needed
-        if (!keyBag) {
-            const bagsUnshrouded = p12.getBags({ bagType: forge.pki.oids.keyBag });
-            keyBag = bagsUnshrouded[forge.pki.oids.keyBag]?.[0];
-        }
-
-        if (!keyBag) {
-            throw new Error("No private key found in P12 file bags");
-        }
-
-        // Convert Forge Key to PEM
-        privateKeyPem = forge.pki.privateKeyToPem(keyBag.key);
-        // console.log("Private Key extracted successfully (PEM length: " + privateKeyPem.length + ")");
+        // Read the extracted PEM key
+        privateKeyPem = fs.readFileSync(tempKeyPath, 'utf8');
 
     } catch (e: any) {
-        console.error(`[AgidSigner] Forge Error:`, e);
-        throw new Error(`Failed to extract private key via Forge: ${e.message}`);
+        console.error(`[AgidSigner] OpenSSL Error:`, e.message);
+        // Try without -legacy if it failed (maybe older OpenSSL version on Render?)
+        try {
+             if (e.message.includes("legacy")) {
+                 console.log("[AgidSigner] Retrying without -legacy flag...");
+                 execSync(`openssl pkcs12 -in "${certPath}" -nocerts -out "${tempKeyPath}" -nodes -passin file:"${tempPassPath}"`);
+                 privateKeyPem = fs.readFileSync(tempKeyPath, 'utf8');
+             } else {
+                 throw e;
+             }
+        } catch (retryErr: any) {
+             throw new Error(`Failed to extract private key via OpenSSL: ${retryErr.message}`);
+        }
+    } finally {
+        // Clean up temp files
+        if (fs.existsSync(tempPassPath)) fs.unlinkSync(tempPassPath);
+        if (fs.existsSync(tempKeyPath)) fs.unlinkSync(tempKeyPath);
     }
 
-    // 2. Import into Node Crypto (Standard PEM is safe)
+    // 2. Import into Node Crypto (Standard PEM is universally accepted)
     const privateKey = crypto.createPrivateKey(privateKeyPem);
 
-    // 3. Create JWS Header (Minimal)
+    // 3. Create JWS Detached Header (Minimal)
     const header = {
         alg: 'RS256',
         typ: 'JWT'
@@ -84,7 +92,7 @@ export function signAgidPayload(payload: string, company: CompanyKey): string {
     
     const signatureB64 = sign.sign(privateKey, 'base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-    // 6. Return JWS Detached Format: header..signature
-    console.log(`[AgidSigner] Signature generated successfully via Forge.`);
+    // 6. Return JWS Detached Format
+    console.log(`[AgidSigner] Signature generated successfully via OpenSSL.`);
     return `${headerB64}..${signatureB64}`;
 }
