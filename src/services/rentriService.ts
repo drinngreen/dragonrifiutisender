@@ -23,10 +23,8 @@ export class RentriService {
 
         const client = getRentriClient(company as CompanyKey);
         
-        // CORRECTED ENDPOINT: Relative to /formulari/v1.0
-        // Usually /emissione or just /
-        // Let's assume /emissione based on context, but if base is specific, maybe just /
-        const endpoint = '/emissione'; 
+        // CORRECTED ENDPOINT: POST directly to base URL (which is .../formulari/v1.0)
+        const endpoint = '/'; 
         
         console.log(`[RentriService] SENDING REAL XML to ${client.defaults.baseURL}${endpoint}`);
         
