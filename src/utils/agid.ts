@@ -33,7 +33,7 @@ export function signAgidPayload(payload: string, company: CompanyKey): string {
         const pfxBuffer = fs.readFileSync(certPath);
         privateKey = crypto.createPrivateKey({
             key: pfxBuffer,
-            format: 'pfx',
+            format: 'pkcs12', // FIXED: Use 'pkcs12' instead of 'pfx' for Node.js crypto
             passphrase: certPass
         });
     } catch (e: any) {
