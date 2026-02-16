@@ -12,12 +12,12 @@ export const RENTRI_CONFIG = {
     'global': {
         apiBase: BASE_URL,
         apiKey: process.env.RENTRI_API_KEY_GLOBAL,
-        certPath: './certs/certificato.p12'
+        certPath: process.env.RENTRI_CERT_PATH_GLOBAL || './certs/certificato.p12'
     },
     'multy': {
         apiBase: BASE_URL,
         apiKey: process.env.RENTRI_API_KEY_MULTY,
-        certPath: './certs/multyproget.p12'
+        certPath: process.env.RENTRI_CERT_PATH_MULTY || './certs/multyproget.p12'
     }
 };
 
