@@ -1,12 +1,12 @@
-import forge from 'node-forge';
 import crypto from 'crypto';
 import fs from 'fs';
+import { spawnSync } from 'child_process';
 import { RENTRI_CONFIG, CompanyKey } from '../config';
 
 /**
  * Generates an Agid-JWT-Signature in JWS Detached format using ES256 algorithm.
- * Uses node-forge with BINARY string conversion to robustly extract private key.
- * This bypasses Node.js native crypto limitations with P12 encoding.
+ * Uses OpenSSL CLI via spawnSync to robustly extract Private Key from PFX.
+ * This handles both modern and legacy P12 algorithms (RC2/3DES) safely.
  */
 export function signAgidPayload(payload: string, company: CompanyKey): string {
     const config = RENTRI_CONFIG[company];
@@ -20,63 +20,92 @@ export function signAgidPayload(payload: string, company: CompanyKey): string {
     if (!fs.existsSync(certPath)) throw new Error(`Certificate not found: ${certPath}`);
     if (!certPass) throw new Error(`Password missing for ${company}`);
 
-    // 1. Read file as Buffer
-    const p12Buffer = fs.readFileSync(certPath);
+    // 1. Prepare temporary paths in /tmp (Render compliant)
+    const uniqueId = Date.now().toString() + Math.random().toString().slice(2,6);
+    const tempP12Path = `/tmp/cert_${uniqueId}.p12`;
+    const tempPassPath = `/tmp/pass_${uniqueId}.txt`;
+    const tempKeyPath = `/tmp/key_${uniqueId}.pem`;
 
-    // 2. Convert to binary string for Forge (CRITICAL FIX for binary data)
-    // Node.js 'binary' encoding is essentially Latin-1, which preserves bytes as char codes
-    const p12Binary = p12Buffer.toString('binary');
-    
-    // 3. Parse ASN.1
-    const p12Asn1 = forge.asn1.fromDer(p12Binary);
-    
-    // 4. Decrypt P12
-    let p12: forge.pkcs12.Pkcs12P12;
+    let privateKeyPem: string;
+
     try {
-        p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, certPass);
+        console.log(`[AgidSigner] Extracting Key via OpenSSL CLI (SpawnSync)`);
+
+        // Copy P12 to temp to avoid permission issues and ensure clean state
+        fs.copyFileSync(certPath, tempP12Path);
+        
+        // Write password to temp file (secure, no shell injection)
+        fs.writeFileSync(tempPassPath, certPass);
+
+        // Run OpenSSL: try with -legacy provider first (OpenSSL 3+)
+        // openssl pkcs12 -in P12 -nocerts -out KEY -nodes -passin file:PASS -legacy
+        let result = spawnSync('openssl', [
+            'pkcs12',
+            '-in', tempP12Path,
+            '-nocerts',
+            '-out', tempKeyPath,
+            '-nodes',
+            '-passin', `file:${tempPassPath}`,
+            '-legacy'
+        ]);
+
+        if (result.status !== 0) {
+            console.log(`[AgidSigner] OpenSSL (Legacy) failed, retrying without -legacy flag...`);
+            // Retry without -legacy (for older OpenSSL or non-legacy algorithms)
+            result = spawnSync('openssl', [
+                'pkcs12',
+                '-in', tempP12Path,
+                '-nocerts',
+                '-out', tempKeyPath,
+                '-nodes',
+                '-passin', `file:${tempPassPath}`
+            ]);
+        }
+
+        if (result.status !== 0) {
+            const stderr = result.stderr.toString();
+            throw new Error(`OpenSSL failed with code ${result.status}: ${stderr}`);
+        }
+
+        // Read the extracted PEM key
+        if (!fs.existsSync(tempKeyPath)) {
+            throw new Error("OpenSSL succeeded but key file was not created.");
+        }
+        
+        privateKeyPem = fs.readFileSync(tempKeyPath, 'utf8');
+
     } catch (e: any) {
-        throw new Error(`Forge P12 Decryption Failed: ${e.message}`);
+        throw new Error(`Failed to extract private key via OpenSSL: ${e.message}`);
+    } finally {
+        // Clean up temp files
+        if (fs.existsSync(tempP12Path)) fs.unlinkSync(tempP12Path);
+        if (fs.existsSync(tempPassPath)) fs.unlinkSync(tempPassPath);
+        if (fs.existsSync(tempKeyPath)) fs.unlinkSync(tempKeyPath);
     }
 
-    // 5. Extract Private Key Bag
-    // Try ShroudedKeyBag first (most common for PFX)
-    let bag = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag]?.[0];
-    
-    if (!bag) {
-        // Fallback to plain KeyBag
-        bag = p12.getBags({ bagType: forge.pki.oids.keyBag })[forge.pki.oids.keyBag]?.[0];
-    }
+    // 2. Import into Node Crypto (Standard PEM is universally accepted)
+    const privateKeyObj = crypto.createPrivateKey(privateKeyPem);
 
-    if (!bag) {
-        throw new Error("Private key bag not found in P12 via Forge");
-    }
-
-    // 6. Convert to PEM (Node.js native format)
-    // This gives us a standard PKCS#8 or PKCS#1 PEM string
-    const privateKeyPem = forge.pki.privateKeyToPem(bag.key);
-    
-    // 7. Create Key Object
-    const privateKey = crypto.createPrivateKey(privateKeyPem);
-
-    // 8. JWS Header (ES256)
+    // 3. JWS Header (ES256 for AgID)
     const header = { alg: 'ES256', typ: 'JWT' };
     
+    // Base64URL encode header
     const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+    // 4. Base64URL encode payload
     const payloadB64 = Buffer.from(payload).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-    // 9. Sign (ES256 - IEEE P1363)
+    // 5. Sign (ES256 - IEEE P1363)
     const signingInput = `${headerB64}.${payloadB64}`;
     
-    // Use crypto.sign convenience method with dsaEncoding option (Node 15+)
-    // This is critical for ES256 compliance with JWT standard
     const signature = crypto.sign("sha256", Buffer.from(signingInput), {
-        key: privateKey,
+        key: privateKeyObj,
         dsaEncoding: "ieee-p1363", 
     });
 
     const signatureB64 = signature.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-    // 10. Return JWS Detached Format: header..signature
-    console.log(`[AgidSigner] JWS Detached generated via Forge (Binary Fix).`);
+    // 6. Return JWS Detached Format: header..signature
+    console.log(`[AgidSigner] JWS Detached generated via OpenSSL CLI.`);
     return `${headerB64}..${signatureB64}`;
 }
