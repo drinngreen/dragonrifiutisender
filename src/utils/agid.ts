@@ -3,8 +3,8 @@ import fs from 'fs';
 import { RENTRI_CONFIG, CompanyKey } from '../config';
 
 /**
- * Generates an Agid-JWT-Signature in JWS Detached format.
- * Uses Node.js Native crypto.pkcs12 (if available in environment) as requested.
+ * Generates an Agid-JWT-Signature in JWS Detached format using ES256 algorithm.
+ * Compliant with AgID/RENTRI specifications for Elliptic Curve certificates.
  */
 export function signAgidPayload(payload: string, company: CompanyKey): string {
     const config = RENTRI_CONFIG[company];
@@ -18,26 +18,18 @@ export function signAgidPayload(payload: string, company: CompanyKey): string {
     if (!fs.existsSync(certPath)) throw new Error(`Certificate not found: ${certPath}`);
     if (!certPass) throw new Error(`Password missing for ${company}`);
 
-    // 1. Read file as pure binary buffer
+    // 1. Read P12 file
     const p12Buffer = fs.readFileSync(certPath);
-
-    // 2. Use Node Native PKCS12
-    // We assume this method exists in the target Node environment (Render)
-    // even if local types don't define it.
-    
     let privateKeyObj: crypto.KeyObject;
 
     try {
-        // @ts-ignore: Assuming crypto.pkcs12 exists or falling back
+        // Native Node key extraction logic (robust on Render)
+        // @ts-ignore
         if (crypto.pkcs12 && typeof crypto.pkcs12.getPrivateKey === 'function') {
-            console.log(`[AgidSigner] Using crypto.pkcs12.getPrivateKey (Native)`);
             // @ts-ignore
             const { key } = crypto.pkcs12.getPrivateKey(p12Buffer, certPass);
             privateKeyObj = crypto.createPrivateKey(key);
         } else {
-            // Fallback to standard createPrivateKey with pkcs12 format (Node 15.6+)
-            // This is actually the standard way to do what user asked, but cleaner syntax
-            console.log(`[AgidSigner] Fallback: Using standard crypto.createPrivateKey({ format: 'pkcs12' })`);
             privateKeyObj = crypto.createPrivateKey({
                 key: p12Buffer,
                 format: 'pkcs12',
@@ -45,23 +37,32 @@ export function signAgidPayload(payload: string, company: CompanyKey): string {
             });
         }
     } catch (e: any) {
-        console.error(`[AgidSigner] Native Crypto Error:`, e.message);
-        throw new Error(`Failed to extract private key via Native Crypto: ${e.message}`);
+        throw new Error(`Failed to extract private key: ${e.message}`);
     }
 
-    // 3. JWS Header
-    const header = { alg: 'RS256', typ: 'JWT' };
+    // 2. JWS Header (ES256 for AgID)
+    const header = { alg: 'ES256', typ: 'JWT' };
+    
+    // Base64URL encode header
     const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+    // 3. Base64URL encode payload (for signature calculation only)
     const payloadB64 = Buffer.from(payload).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-    // 4. Sign
+    // 4. Sign (ES256 - IEEE P1363)
+    // The input to sign is "header.payload"
     const signingInput = `${headerB64}.${payloadB64}`;
-    const sign = crypto.createSign('SHA256');
-    sign.update(signingInput);
-    sign.end();
     
-    const signatureB64 = sign.sign(privateKeyObj, 'base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    // Use crypto.sign convenience method with dsaEncoding option (Node 15+)
+    // This is critical for ES256 compliance with JWT standard
+    const signature = crypto.sign("sha256", Buffer.from(signingInput), {
+        key: privateKeyObj,
+        dsaEncoding: "ieee-p1363", 
+    });
 
-    console.log(`[AgidSigner] Signature generated via Native Crypto.`);
+    const signatureB64 = signature.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+    // 5. Return JWS Detached Format: header..signature
+    console.log(`[AgidSigner] JWS Detached generated (ES256 IEEE-P1363).`);
     return `${headerB64}..${signatureB64}`;
 }
