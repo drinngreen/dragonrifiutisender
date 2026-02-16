@@ -1,10 +1,11 @@
-export const RENTRI_ENV = process.env.RENTRI_ENV || 'SANDBOX';
+// FORCE PRODUCTION DEFAULT
+export const RENTRI_ENV = process.env.RENTRI_ENV || 'PRODUCTION';
 
-// Default URLs - OVERRIDE THESE IN RENDER ENV VARS IF NEEDED
-const PROD_URL = 'https://rentri.gov.it/api/v1'; 
+const PROD_URL = 'https://api.rentri.gov.it'; 
 const TEST_URL = 'https://rentri.gov.it/test/api/v1';
 
-const BASE_URL = process.env.RENTRI_API_URL || (RENTRI_ENV === 'PRODUCTION' ? PROD_URL : TEST_URL);
+// Use PROD_URL by default unless env is explicitly SANDBOX
+const BASE_URL = process.env.RENTRI_API_URL || (RENTRI_ENV === 'SANDBOX' ? TEST_URL : PROD_URL);
 
 console.log(`[Config] Running in ${RENTRI_ENV} mode. API Base: ${BASE_URL}`);
 
