@@ -5,8 +5,7 @@ import { RENTRI_CONFIG, CompanyKey } from '../config';
 
 /**
  * Generates an Agid-JWT-Signature in JWS Detached format using ES256 algorithm.
- * Supports Base64 P12 from Environment Variables with aggressive cleanup.
- * Uses OpenSSL CLI via spawnSync for robust key extraction.
+ * Includes DEBUGGING for P12 integrity and OpenSSL verification.
  */
 export function signAgidPayload(payload: string, company: CompanyKey): string {
     const config = RENTRI_CONFIG[company];
@@ -28,9 +27,14 @@ export function signAgidPayload(payload: string, company: CompanyKey): string {
 
     if (envBase64 && envBase64.length > 100) {
         console.log(`[AgidSigner] Using Base64 Certificate from Env Var for ${company}`);
-        // CRITICAL FIX: Remove all whitespace/newlines from Base64 string
         const cleanBase64 = envBase64.replace(/[\r\n\s]/g, '');
         p12Buffer = Buffer.from(cleanBase64, 'base64');
+        
+        // DEBUG: Integrity Check
+        const sha256 = crypto.createHash('sha256').update(p12Buffer).digest('hex');
+        console.log(`[AgidSigner] P12 Buffer SHA256: ${sha256}`);
+        console.log(`[AgidSigner] P12 Buffer Size: ${p12Buffer.length} bytes`);
+        
     } else {
         console.log(`[AgidSigner] Reading P12 from file: ${certPath}`);
         if (!fs.existsSync(certPath)) throw new Error(`Certificate not found at: ${certPath}`);
@@ -49,7 +53,18 @@ export function signAgidPayload(payload: string, company: CompanyKey): string {
         fs.writeFileSync(tempP12Path, p12Buffer);
         fs.writeFileSync(tempPassPath, certPass);
 
-        // Run OpenSSL
+        // DEBUG: Verify P12 structure
+        console.log(`[AgidSigner] Verifying P12 structure with OpenSSL...`);
+        const infoResult = spawnSync('openssl', ['pkcs12', '-info', '-in', tempP12Path, '-nokeys', '-nocerts', '-passin', `file:${tempPassPath}`, '-legacy']);
+        
+        if (infoResult.status !== 0) {
+             console.error(`[AgidSigner] P12 Verify FAILED. Stderr: ${infoResult.stderr.toString()}`);
+             // Proceed anyway, maybe extraction works even if info fails (unlikely)
+        } else {
+             console.log(`[AgidSigner] P12 Verify OK.`);
+        }
+
+        // Run OpenSSL to extract key
         let result = spawnSync('openssl', [
             'pkcs12',
             '-in', tempP12Path,
@@ -74,14 +89,10 @@ export function signAgidPayload(payload: string, company: CompanyKey): string {
 
         if (result.status !== 0) {
             const stderr = result.stderr.toString();
-            console.error(`[AgidSigner] OpenSSL Stderr: ${stderr}`);
+            console.error(`[AgidSigner] OpenSSL Extraction Stderr: ${stderr}`);
             throw new Error(`OpenSSL failed with code ${result.status}: ${stderr}`);
         }
 
-        if (!fs.existsSync(tempKeyPath)) {
-            throw new Error("OpenSSL succeeded but key file was not created.");
-        }
-        
         privateKeyPem = fs.readFileSync(tempKeyPath, 'utf8');
 
     } catch (e: any) {
@@ -114,6 +125,7 @@ export function signAgidPayload(payload: string, company: CompanyKey): string {
     const signatureB64 = signature.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
     // 6. Return JWS Detached Format
-    console.log(`[AgidSigner] JWS Detached generated via OpenSSL (Base64 Source).`);
-    return `${headerB64}..${signatureB64}`;
+    const finalSignature = `${headerB64}..${signatureB64}`;
+    console.log(`[AgidSigner] Generated JWS Length: ${finalSignature.length} chars`);
+    return finalSignature;
 }
