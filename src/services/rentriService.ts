@@ -1,41 +1,49 @@
-import axios from 'axios';
-import { getAuthHeaders } from '../utils/auth';
+import { getRentriClient } from '../utils/clientFactory';
 import { RENTRI_CONFIG, CompanyKey } from '../config';
 import { buildRentriXml } from '../utils/xmlGenerator';
 
 export class RentriService {
 
     static async vidimateFir(company: string): Promise<string> {
-        // TODO: Implement actual vidimation logic or mock for now
-        // If RENTRI requires a call to get a number, do it here.
-        // For now, generating a mock unique number to proceed.
+        // TODO: La vidimazione reale richiede una chiamata specifica. 
+        // Per ora manteniamo il mock per non bloccare tutto se l'endpoint è diverso.
+        // Se hai l'endpoint corretto per vidimare, fammelo sapere.
         const mockNumber = `FIR-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
         console.log(`[RentriService] Vidimated mock number: ${mockNumber} for ${company}`);
         return mockNumber;
     }
 
     static async createFir(company: string, payload: any): Promise<any> {
-        const config = RENTRI_CONFIG[company as CompanyKey];
-        if (!config) throw new Error(`Configuration not found for company: ${company}`);
-
         // 1. Generate XML
         const xmlContent = buildRentriXml(payload);
         
-        // 2. Get Auth Headers (Token)
-        const headers = await getAuthHeaders(company as CompanyKey);
+        // 2. Get Real mTLS Client
+        const client = getRentriClient(company as CompanyKey);
 
-        // 3. Send to RENTRI (Mock URL or Real URL)
-        // const url = 'https://api.rentri.gov.it/...'; // TODO: Real URL
-        // const response = await axios.post(url, xmlContent, { headers });
+        // 3. Send to RENTRI - REAL CALL
+        // Endpoint: /fir/emissione (DA CONFERMARE SULLA DOC RENTRI)
+        // Se non è questo, cambialo qui o metti una variabile RENTRI_ENDPOINT_EMISSIONE
+        const endpoint = '/fir/emissione'; 
         
-        // MOCK RESPONSE FOR SAFETY UNTIL TESTED
-        console.log(`[RentriService] Would send XML to RENTRI for ${company}`);
+        console.log(`[RentriService] SENDING REAL XML to ${client.defaults.baseURL}${endpoint}`);
         
-        return {
-            status: 'success',
-            rentriId: `RENTRI-ID-${Date.now()}`,
-            firNumber: payload.dati_partenza?.numero_fir,
-            xmlPreview: xmlContent.substring(0, 100) + '...'
-        };
+        try {
+            const response = await client.post(endpoint, xmlContent);
+
+            console.log(`[RentriService] SUCCESS: ${response.status}`, response.data);
+            return response.data;
+
+        } catch (error: any) {
+            console.error(`[RentriService] FAILED:`, error.response?.data || error.message);
+            
+            // Log full error details for debugging
+            if (error.code) console.error(`Code: ${error.code}`);
+            if (error.response) {
+                console.error(`Status: ${error.response.status}`);
+                console.error(`Data: ${JSON.stringify(error.response.data)}`);
+            }
+
+            throw new Error(`RENTRI API Error: ${JSON.stringify(error.response?.data || error.message)}`);
+        }
     }
 }
