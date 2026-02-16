@@ -1,35 +1,28 @@
 {
-  "name": "dragonrifiutisender",
+  "name": "dragon-rentri-backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Pure backend for RENTRI API communication",
+  "main": "dist/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node dist/index.js",
+    "dev": "nodemon src/index.ts",
+    "build": "tsc && mkdir -p dist/certs && cp src/certs/*.p12 dist/certs/",
+    "lint": "eslint . --ext .ts"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/drinngreen/dragonrifiutisender.git"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "bugs": {
-    "url": "https://github.com/drinngreen/dragonrifiutisender/issues"
-  },
-  "homepage": "https://github.com/drinngreen/dragonrifiutisender#readme",
   "dependencies": {
-    "axios": "^1.13.5",
-    "cors": "^2.8.6",
-    "dotenv": "^17.3.1",
-    "express": "^5.2.1",
-    "zod": "^4.3.6"
+    "axios": "^1.6.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "fast-xml-parser": "^4.3.2",
+    "zod": "^3.22.4"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.19",
-    "@types/express": "^5.0.6",
-    "@types/node": "^25.2.3",
-    "nodemon": "^3.1.11",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "@types/cors": "^2.8.15",
+    "@types/express": "^4.17.20",
+    "@types/node": "^20.8.10",
+    "nodemon": "^3.0.1",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.2.2"
   }
 }
