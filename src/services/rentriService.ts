@@ -1,7 +1,8 @@
 import { getRentriClient } from '../utils/clientFactory';
 import { RENTRI_CONFIG, CompanyKey } from '../config';
 import { buildRentriXml } from '../utils/xmlGenerator';
-import { signAgidPayload } from '../utils/agid';
+// Import from V2 to force Git update
+import { signAgidPayload } from '../utils/agid_v2';
 
 export class RentriService {
 
@@ -21,7 +22,6 @@ export class RentriService {
             agidSignature = signAgidPayload(xmlContent, company as CompanyKey);
         } catch (e: any) {
             console.error(`[RentriService] Failed to generate Agid Signature: ${e.message}`);
-            // If signature fails, we probably can't proceed, but let's try anyway or throw
             throw new Error(`Signature Error: ${e.message}`);
         }
 
@@ -29,7 +29,6 @@ export class RentriService {
         const client = getRentriClient(company as CompanyKey);
 
         // 4. Send to RENTRI - REAL CALL
-        // Endpoint: /fir/emissione (DA CONFERMARE SULLA DOC RENTRI)
         const endpoint = '/fir/emissione'; 
         
         console.log(`[RentriService] SENDING REAL XML to ${client.defaults.baseURL}${endpoint}`);
