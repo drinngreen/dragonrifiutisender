@@ -3,11 +3,19 @@ import fs from 'fs';
 import { spawnSync } from 'child_process';
 import { RENTRI_CONFIG, CompanyKey, RENTRI_AUDIENCE } from '../config';
 
-// HELPER: Get Private Key (Shared logic)
-function getPrivateKey(company: CompanyKey): string {
-    const config = RENTRI_CONFIG[company];
-    if (!config) throw new Error(`Config not found for company: ${company}`);
+// Structure for keys
+interface CertData {
+    privateKey: string;
+    certificate: string; // PEM
+}
 
+// CACHE to avoid extracting P12 every time (it's slow)
+const certCache: Record<string, CertData> = {};
+
+function getCertData(company: CompanyKey): CertData {
+    if (certCache[company]) return certCache[company];
+
+    const config = RENTRI_CONFIG[company];
     const passEnvName = `RENTRI_CERT_PASS_${company.toUpperCase()}`;
     const certPass = process.env[passEnvName];
     if (!certPass) throw new Error(`Password missing for ${company}`);
@@ -17,121 +25,159 @@ function getPrivateKey(company: CompanyKey): string {
     const envBase64 = process.env[base64EnvName];
 
     if (envBase64 && envBase64.length > 100) {
-        console.log(`[AgidSigner] Using Base64 Certificate from Env Var for ${company}`);
-        const cleanBase64 = envBase64.replace(/[\r\n\s]/g, '');
-        p12Buffer = Buffer.from(cleanBase64, 'base64');
+        p12Buffer = Buffer.from(envBase64.replace(/[\r\n\s]/g, ''), 'base64');
     } else {
-        const certPath = config.certPath; 
-        console.log(`[AgidSigner] Reading P12 from file: ${certPath}`);
-        if (!fs.existsSync(certPath)) throw new Error(`Certificate not found at: ${certPath}`);
-        p12Buffer = fs.readFileSync(certPath);
+        if (!fs.existsSync(config.certPath)) throw new Error(`Certificate not found: ${config.certPath}`);
+        p12Buffer = fs.readFileSync(config.certPath);
     }
 
-    // Extract Key using OpenSSL (Robust method)
-    const uniqueId = Date.now().toString() + Math.random().toString().slice(2,6);
-    const tempP12Path = `/tmp/cert_${uniqueId}.p12`;
-    const tempPassPath = `/tmp/pass_${uniqueId}.txt`;
-    const tempKeyPath = `/tmp/key_${uniqueId}.pem`;
+    // Extract both Key and Cert
+    const uniqueId = Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+    const p12Path = `/tmp/${uniqueId}.p12`;
+    const passPath = `/tmp/${uniqueId}.txt`;
+    const keyPath = `/tmp/${uniqueId}.key`;
+    const crtPath = `/tmp/${uniqueId}.crt`;
 
     try {
-        fs.writeFileSync(tempP12Path, p12Buffer);
-        fs.writeFileSync(tempPassPath, certPass);
+        fs.writeFileSync(p12Path, p12Buffer);
+        fs.writeFileSync(passPath, certPass);
 
-        let result = spawnSync('openssl', [
-            'pkcs12', '-in', tempP12Path, '-nocerts', '-out', tempKeyPath,
-            '-nodes', '-passin', `file:${tempPassPath}`, '-legacy'
-        ]);
-
-        if (result.status !== 0) {
-            // Retry without legacy
-            result = spawnSync('openssl', [
-                'pkcs12', '-in', tempP12Path, '-nocerts', '-out', tempKeyPath,
-                '-nodes', '-passin', `file:${tempPassPath}`
-            ]);
+        // 1. Extract Key
+        let resKey = spawnSync('openssl', ['pkcs12', '-in', p12Path, '-nocerts', '-out', keyPath, '-nodes', '-passin', `file:${passPath}`, '-legacy']);
+        if (resKey.status !== 0) {
+             resKey = spawnSync('openssl', ['pkcs12', '-in', p12Path, '-nocerts', '-out', keyPath, '-nodes', '-passin', `file:${passPath}`]); // Try without legacy
+        }
+        
+        // 2. Extract Cert (Leaf)
+        let resCert = spawnSync('openssl', ['pkcs12', '-in', p12Path, '-clcerts', '-nokeys', '-out', crtPath, '-passin', `file:${passPath}`, '-legacy']);
+        if (resCert.status !== 0) {
+             resCert = spawnSync('openssl', ['pkcs12', '-in', p12Path, '-clcerts', '-nokeys', '-out', crtPath, '-passin', `file:${passPath}`]);
         }
 
-        if (result.status !== 0) {
-            throw new Error(`OpenSSL failed: ${result.stderr.toString()}`);
+        if (!fs.existsSync(keyPath) || !fs.existsSync(crtPath)) {
+            throw new Error(`OpenSSL extraction failed. Key status: ${resKey.status}, Cert status: ${resCert.status}`);
         }
 
-        return fs.readFileSync(tempKeyPath, 'utf8');
+        const data = {
+            privateKey: fs.readFileSync(keyPath, 'utf8'),
+            certificate: fs.readFileSync(crtPath, 'utf8')
+        };
+        
+        certCache[company] = data;
+        return data;
 
     } finally {
         try {
-            if (fs.existsSync(tempP12Path)) fs.unlinkSync(tempP12Path);
-            if (fs.existsSync(tempPassPath)) fs.unlinkSync(tempPassPath);
-            if (fs.existsSync(tempKeyPath)) fs.unlinkSync(tempKeyPath);
-        } catch (e) { /* ignore cleanup errors */ }
+            if (fs.existsSync(p12Path)) fs.unlinkSync(p12Path);
+            if (fs.existsSync(passPath)) fs.unlinkSync(passPath);
+            if (fs.existsSync(keyPath)) fs.unlinkSync(keyPath);
+            if (fs.existsSync(crtPath)) fs.unlinkSync(crtPath);
+        } catch {}
     }
 }
 
-/**
- * Generates an Agid-JWT-Signature in JWS Detached format (header..signature)
- * Used for Integrity of the Body.
- */
-export function signAgidPayload(payload: string, company: CompanyKey): string {
-    const privateKeyPem = getPrivateKey(company);
-    const privateKeyObj = crypto.createPrivateKey(privateKeyPem);
-    const config = RENTRI_CONFIG[company];
-
-    // JWS Detached Header
-    // IMPORTANT: "cty" might be required? Usually not for AgID integrity.
-    const header = { alg: 'ES256', typ: 'JWT' };
-    
-    const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    const payloadB64 = Buffer.from(payload).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-
-    const signingInput = `${headerB64}.${payloadB64}`;
-    const signature = crypto.sign("sha256", Buffer.from(signingInput), {
-        key: privateKeyObj,
-        dsaEncoding: "ieee-p1363", // STANDARD TASSATIVO
-    });
-
-    const signatureB64 = signature.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-
-    // JWS Detached: header..signature
-    const detached = `${headerB64}..${signatureB64}`;
-    console.log(`[AgidSigner] JWS Detached generated for ${company}. Length: ${detached.length}`);
-    return detached;
+// Helper to get x5c (Base64 of DER) from PEM
+function getX5c(pem: string): string[] {
+    // Remove headers/footers and newlines
+    const base64 = pem
+        .replace(/-----BEGIN CERTIFICATE-----/g, '')
+        .replace(/-----END CERTIFICATE-----/g, '')
+        .replace(/[\r\n\s]/g, '');
+    return [base64];
 }
 
 /**
- * Generates a Standard JWT for Authorization (header.payload.signature)
- * Used for Bearer Token.
+ * Generates the AgID-JWT-Signature (Integrity Token)
+ * Matches C# structure:
+ * - Header: { alg: ES256, typ: JWT, x5c: [...] }
+ * - Payload: { digest: SHA256(body), signed_headers: [{ digest, content-type }], ... }
  */
-export function generateAuthJwt(company: CompanyKey): string {
-    const privateKeyPem = getPrivateKey(company);
-    const privateKeyObj = crypto.createPrivateKey(privateKeyPem);
+export function signAgidPayload(body: string, company: CompanyKey): string {
+    const { privateKey, certificate } = getCertData(company);
     const config = RENTRI_CONFIG[company];
-    
-    // Validate Issuer
-    if (!config.issuer) throw new Error(`Issuer (CF/P.IVA) not configured for ${company}`);
-
-    // Standard Auth Claims
     const now = Math.floor(Date.now() / 1000);
-    const payload = {
-        iss: config.issuer, // MUST BE CF/P.IVA from Certificate
-        sub: config.issuer, // MUST BE CF/P.IVA from Certificate
-        aud: RENTRI_AUDIENCE, // MUST BE 'rentrigov.api' (Prod) or 'rentrigov.demo.api'
-        iat: now,
-        exp: now + 600, // 10 minutes validity
-        jti: crypto.randomUUID()
-    };
-    
-    console.log(`[AuthJwt] Generating Token. Iss: ${payload.iss}, Aud: ${payload.aud}`);
 
-    const header = { alg: 'ES256', typ: 'JWT' };
+    // 1. Calculate Digest of Body
+    const digest = crypto.createHash('sha256').update(body, 'utf8').digest('base64');
+    const digestHeader = `SHA-256=${digest}`;
+
+    // 2. Prepare Payload
+    const payload = {
+        iss: config.issuer,
+        sub: config.issuer,
+        aud: RENTRI_AUDIENCE,
+        iat: now,
+        exp: now + 300, // 5 mins
+        jti: crypto.randomUUID(),
+        // IMPORTANT: AgID Integrity claims
+        digest: digestHeader,
+        signed_headers: [
+            { digest: digestHeader },
+            { "content-type": "application/json" }
+        ]
+    };
+
+    // 3. Prepare Header with x5c
+    const header = {
+        alg: 'ES256',
+        typ: 'JWT',
+        x5c: getX5c(certificate)
+    };
+
+    // 4. Sign
     const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
     const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-
+    
     const signingInput = `${headerB64}.${payloadB64}`;
     const signature = crypto.sign("sha256", Buffer.from(signingInput), {
-        key: privateKeyObj,
-        dsaEncoding: "ieee-p1363", // STANDARD TASSATIVO
-    });
+        key: privateKey,
+        dsaEncoding: "ieee-p1363"
+    }).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-    const signatureB64 = signature.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    // FULL JWT: header.payload.signature
+    // This matches the C# implementation which uses JsonWebTokenHandler.CreateToken (produces full JWT)
+    return `${headerB64}.${payloadB64}.${signature}`;
+}
 
-    // Standard JWT: header.payload.signature
-    return `${headerB64}.${payloadB64}.${signatureB64}`;
+/**
+ * Generates the Authorization Bearer Token
+ * Header: { alg: ES256, typ: JWT, kid: SHA256(Cert) } -> Reduced size
+ * Payload: { iss, sub, aud, iat, exp, jti }
+ */
+export function generateAuthJwt(company: CompanyKey): string {
+    const { privateKey, certificate } = getCertData(company);
+    const config = RENTRI_CONFIG[company];
+    const now = Math.floor(Date.now() / 1000);
+
+    const payload = {
+        iss: config.issuer,
+        sub: config.issuer,
+        aud: RENTRI_AUDIENCE,
+        iat: now,
+        exp: now + 300,
+        jti: crypto.randomUUID()
+    };
+
+    // CALCULATE KID (SHA-256 Fingerprint of Cert) instead of sending full x5c
+    const certDer = Buffer.from(getX5c(certificate)[0], 'base64');
+    const thumbprint = crypto.createHash('sha256').update(certDer).digest('hex');
+
+    const header = {
+        alg: 'ES256',
+        typ: 'JWT',
+        kid: thumbprint // USE KID INSTEAD OF X5C TO REDUCE SIZE
+    };
+
+    const headerB64 = Buffer.from(JSON.stringify(header)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    
+    const signingInput = `${headerB64}.${payloadB64}`;
+    const signature = crypto.sign("sha256", Buffer.from(signingInput), {
+        key: privateKey,
+        dsaEncoding: "ieee-p1363"
+    }).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+    const token = `${headerB64}.${payloadB64}.${signature}`;
+    console.log(`[AuthJwt] Token Length: ${token.length} chars (Should be < 4000)`);
+    return token;
 }
