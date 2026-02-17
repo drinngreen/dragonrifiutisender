@@ -11,19 +11,17 @@ export function signAgidPayload(payload: string, company: CompanyKey): string {
     const config = RENTRI_CONFIG[company];
     if (!config) throw new Error(`Config not found for company: ${company}`);
 
-    const certPath = config.certPath; 
-    const certPass = company === 'global' 
-        ? process.env.RENTRI_CERT_PASS_GLOBAL 
-        : process.env.RENTRI_CERT_PASS_MULTY;
+    // DYNAMIC ENV VAR ACCESS
+    const passEnvName = `RENTRI_CERT_PASS_${company.toUpperCase()}`;
+    const certPass = process.env[passEnvName];
 
-    if (!certPass) throw new Error(`Password missing for ${company}`);
+    if (!certPass) throw new Error(`Password missing for ${company} (Checked env: ${passEnvName})`);
 
     // 1. Get P12 Content
     let p12Buffer: Buffer;
     
-    const envBase64 = company === 'global' 
-        ? process.env.RENTRI_CERT_BASE64_GLOBAL 
-        : process.env.RENTRI_CERT_BASE64_MULTY;
+    const base64EnvName = `RENTRI_CERT_BASE64_${company.toUpperCase()}`;
+    const envBase64 = process.env[base64EnvName];
 
     if (envBase64 && envBase64.length > 100) {
         console.log(`[AgidSigner] Using Base64 Certificate from Env Var for ${company}`);
@@ -36,12 +34,14 @@ export function signAgidPayload(payload: string, company: CompanyKey): string {
         console.log(`[AgidSigner] P12 Buffer Size: ${p12Buffer.length} bytes`);
         
     } else {
+        const certPath = config.certPath; 
         console.log(`[AgidSigner] Reading P12 from file: ${certPath}`);
         if (!fs.existsSync(certPath)) throw new Error(`Certificate not found at: ${certPath}`);
         p12Buffer = fs.readFileSync(certPath);
     }
 
     // 2. Prepare temporary paths
+    // Use /tmp which is standard on Railway/Render (Linux)
     const uniqueId = Date.now().toString() + Math.random().toString().slice(2,6);
     const tempP12Path = `/tmp/cert_${uniqueId}.p12`;
     const tempPassPath = `/tmp/pass_${uniqueId}.txt`;

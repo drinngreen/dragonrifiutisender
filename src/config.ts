@@ -20,6 +20,11 @@ export const RENTRI_CONFIG = {
         apiBase: BASE_URL,
         apiKey: process.env.RENTRI_API_KEY_MULTY,
         certPath: process.env.RENTRI_CERT_PATH_MULTY || './certs/multyproget.p12'
+    },
+    'niyol': {
+        apiBase: BASE_URL,
+        apiKey: process.env.RENTRI_API_KEY_NIYOL,
+        certPath: process.env.RENTRI_CERT_PATH_NIYOL || './certs/niyol.p12'
     }
 };
 
