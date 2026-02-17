@@ -119,12 +119,12 @@ export function signAgidPayload(payload: string, company: CompanyKey): string {
     const signingInput = `${headerB64}.${payloadB64}`;
     const signature = crypto.sign("sha256", Buffer.from(signingInput), {
         key: privateKeyObj,
-        dsaEncoding: "ieee-p1363", 
+        dsaEncoding: "ieee-p1363", // STANDARD TASSATIVO PER AGID
     });
 
     const signatureB64 = signature.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-    // 6. Return JWS Detached Format
+    // 6. Return JWS Detached Format (header..signature)
     const finalSignature = `${headerB64}..${signatureB64}`;
     console.log(`[AgidSigner] Generated JWS Length: ${finalSignature.length} chars`);
     return finalSignature;

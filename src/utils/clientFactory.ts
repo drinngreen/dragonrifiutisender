@@ -58,6 +58,7 @@ export function getRentriClient(company: CompanyKey): AxiosInstance {
         headers: {
             'Content-Type': 'application/xml',
             'Accept': 'application/xml',
+            'User-Agent': 'DragonRifiuti/1.0', // Added User-Agent
             ...(config.apiKey ? { 'X-API-KEY': config.apiKey } : {}) 
         }
     });
