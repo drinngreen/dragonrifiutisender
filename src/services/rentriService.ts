@@ -2,12 +2,10 @@ import { getRentriClient } from '../utils/clientFactory';
 import { RENTRI_CONFIG, CompanyKey } from '../config';
 import { buildRentriXml } from '../utils/xmlGenerator';
 import { signAgidPayload, generateAuthJwt } from '../utils/agid_v2';
+import crypto from 'crypto';
 
 export class RentriService {
 
-    /**
-     * Vidimates one or more FIR numbers from RENTRI.
-     */
     static async vidimateFir(company: string, quantity: number = 1): Promise<string[]> {
         console.log(`[RentriService] Starting REAL Vidimation for ${company} (Qty: ${quantity})...`);
         
@@ -30,17 +28,36 @@ export class RentriService {
         try {
             const body = { quantita: quantity };
             const bodyString = JSON.stringify(body);
+            
+            // Calculate Digest for Header
+            const digest = crypto.createHash('sha256').update(bodyString, 'utf8').digest('base64');
+            const digestHeader = `SHA-256=${digest}`;
+
             const authToken = generateAuthJwt(company as CompanyKey);
             const integritySignature = signAgidPayload(bodyString, company as CompanyKey);
 
             const headers: any = {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json',
-                'Authorization': `Bearer ${authToken}`,
-                'Agid-JWT-Signature': integritySignature
+                'Authorization': `Bearer ${authToken}`, // Force space after Bearer
+                'Agid-JWT-Signature': integritySignature,
+                'Digest': digestHeader 
             };
             
-            if (config && config.apiKey) headers['X-API-KEY'] = config.apiKey;
+            if (config && config.apiKey) {
+                headers['X-API-KEY'] = config.apiKey;
+            } else if (process.env.RENTRI_API_KEY_GLOBAL) {
+                 headers['X-API-KEY'] = process.env.RENTRI_API_KEY_GLOBAL;
+            }
+
+            // EXTREME DEBUG
+            console.log(`[RentriService] calling: ${client.defaults.baseURL}${vidimationUrl}`);
+            console.log(`[RentriService] Authorization Header (First 20 chars): '${headers.Authorization.substring(0, 20)}...'`);
+            if (headers['X-API-KEY']) {
+                 console.log(`[RentriService] X-API-KEY is set (Length: ${headers['X-API-KEY'].length})`);
+            } else {
+                 console.error(`[RentriService] CRITICAL: X-API-KEY IS UNDEFINED!`);
+            }
 
             const response = await client.post(vidimationUrl, body, { headers });
             
@@ -57,29 +74,28 @@ export class RentriService {
         }
     }
 
+    // ... Other methods (createFir, getPdf, getXfir) should also add 'Digest' header and use updated signAgidPayload
+    // For brevity, I'm updating only vidimateFir here as it's the blocking one. 
+    // The user can request others if this works.
+    
+    // BUT I should update createFir too to be safe.
     static async createFir(company: string, payload: any): Promise<any> {
         const xmlContent = buildRentriXml(payload);
         
-        // --- FIX: Apply AgID Auth to createFir as well ---
         const authToken = generateAuthJwt(company as CompanyKey);
-        // Signature for XML payload (integrity)
-        let agidSignature = '';
-        try {
-            agidSignature = signAgidPayload(xmlContent, company as CompanyKey);
-        } catch (e: any) {
-            console.error(`[RentriService] Failed to generate Agid Signature: ${e.message}`);
-            throw new Error(`Signature Error: ${e.message}`);
-        }
+        const integritySignature = signAgidPayload(xmlContent, company as CompanyKey);
+        
+        const digest = crypto.createHash('sha256').update(xmlContent, 'utf8').digest('base64');
+        const digestHeader = `SHA-256=${digest}`;
 
         const client = getRentriClient(company as CompanyKey);
         const config = RENTRI_CONFIG[company as CompanyKey];
         const endpoint = '/'; 
         
-        console.log(`[RentriService] SENDING REAL XML to ${client.defaults.baseURL}${endpoint}`);
-        
         const headers: any = {
             'Authorization': `Bearer ${authToken}`,
-            'Agid-JWT-Signature': agidSignature,
+            'Agid-JWT-Signature': integritySignature,
+            'Digest': digestHeader,
             'Content-Type': 'application/xml',
             'Accept': 'application/xml'
         };
@@ -88,78 +104,50 @@ export class RentriService {
         
         try {
             const response = await client.post(endpoint, xmlContent, { headers });
-            console.log(`[RentriService] SUCCESS: ${response.status}`, response.data);
             return response.data;
-
         } catch (error: any) {
-            console.error(`[RentriService] FAILED:`, error.response?.data || error.message);
-            if (error.response) {
-                console.error(`Status: ${error.response.status}`);
-                console.error(`Data: ${JSON.stringify(error.response.data)}`);
-            }
+            console.error(`[RentriService] Create Failed:`, error.response?.data || error.message);
             throw new Error(`RENTRI API Error: ${JSON.stringify(error.response?.data || error.message)}`);
         }
     }
-
+    
     static async getPdf(company: string, numeroFir: string): Promise<Buffer> {
-        const client = getRentriClient(company as CompanyKey);
-        const config = RENTRI_CONFIG[company as CompanyKey];
-        const endpoint = `/${numeroFir}/pdf`;
-        
-        console.log(`[RentriService] Downloading PDF for ${numeroFir}...`);
-        
-        // --- FIX: Apply AgID Auth to PDF Download ---
-        const authToken = generateAuthJwt(company as CompanyKey);
-        // For GET requests, the integrity signature is usually computed on empty body or specific headers.
-        // But RENTRI might just require the Authorization header for GETs.
-        // Let's add at least Authorization. If Signature is needed for GET, it's usually on empty string.
-        const integritySignature = signAgidPayload('', company as CompanyKey); 
-
-        const headers: any = {
-            'Authorization': `Bearer ${authToken}`,
-            'Agid-JWT-Signature': integritySignature, // Signature of empty body
-            'Accept': 'application/pdf'
-        };
-        if (config && config.apiKey) headers['X-API-KEY'] = config.apiKey;
-
-        try {
-            const response = await client.get(endpoint, {
-                responseType: 'arraybuffer',
-                headers
-            });
-            return response.data;
-        } catch (error: any) {
-            console.error(`[RentriService] PDF Download Failed:`, error.message);
-            throw new Error(`RENTRI API Error: ${error.message}`);
-        }
+        return this.genericGet(company, `/${numeroFir}/pdf`, 'application/pdf');
     }
 
     static async getXfir(company: string, numeroFir: string): Promise<string> {
+        // Cast to any because axios returns string for text responseType but signature expects Buffer|string
+        const res = await this.genericGet(company, `/${numeroFir}/xfir`, 'application/xml', 'text');
+        return res as unknown as string;
+    }
+
+    private static async genericGet(company: string, endpoint: string, accept: string, responseType: 'arraybuffer' | 'text' = 'arraybuffer') {
         const client = getRentriClient(company as CompanyKey);
         const config = RENTRI_CONFIG[company as CompanyKey];
-        const endpoint = `/${numeroFir}/xfir`;
         
-        console.log(`[RentriService] Downloading xFIR for ${numeroFir}...`);
-        
-        // --- FIX: Apply AgID Auth to xFIR Download ---
         const authToken = generateAuthJwt(company as CompanyKey);
-        const integritySignature = signAgidPayload('', company as CompanyKey); 
+        // GET requests usually have empty body for digest/signature
+        const body = ''; 
+        const integritySignature = signAgidPayload(body, company as CompanyKey);
+        const digest = crypto.createHash('sha256').update(body, 'utf8').digest('base64');
+        const digestHeader = `SHA-256=${digest}`;
 
         const headers: any = {
             'Authorization': `Bearer ${authToken}`,
             'Agid-JWT-Signature': integritySignature,
-            'Accept': 'application/xml'
+            'Digest': digestHeader,
+            'Accept': accept
         };
         if (config && config.apiKey) headers['X-API-KEY'] = config.apiKey;
 
         try {
             const response = await client.get(endpoint, {
-                responseType: 'text',
+                responseType: responseType as any,
                 headers
             });
             return response.data;
         } catch (error: any) {
-            console.error(`[RentriService] xFIR Download Failed:`, error.message);
+            console.error(`[RentriService] GET Failed:`, error.message);
             throw new Error(`RENTRI API Error: ${error.message}`);
         }
     }
