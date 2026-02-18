@@ -8,7 +8,8 @@ import { signAgidPayload, generateAuthJwt } from '../utils/agid_v2';
 import { getRentriClient } from '../utils/clientFactory';
 
 // BRIDGE CONFIGURATION
-const BRIDGE_URL = 'http://localhost:8765/send-rentri';
+// Default to localhost for local dev, override via env var in production (e.g. internal railway service URL)
+const BRIDGE_URL = process.env.RENTRI_BRIDGE_URL || 'http://localhost:8765/send-rentri';
 
 function getP12Filename(company: string): string {
     switch(company.toLowerCase()) {

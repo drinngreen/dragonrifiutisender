@@ -1,0 +1,23 @@
+# Stage 1: Build .NET Bridge
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS builder
+WORKDIR /src
+COPY bridge-service/RentriBridgeService.csproj ./bridge-service/
+WORKDIR /src/bridge-service
+RUN dotnet restore
+COPY bridge-service/ .
+RUN dotnet publish -c Release -o /app/publish
+
+# Stage 2: Runtime
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app
+COPY --from=builder /app/publish .
+
+# Copy certificates (Required for Bridge to sign)
+# Assumes the build context is the root of the repo
+COPY src/certs/*.p12 ./
+
+# Expose Bridge Port
+EXPOSE 8765
+ENV ASPNETCORE_URLS=http://0.0.0.0:8765
+
+ENTRYPOINT ["dotnet", "RentriBridgeService.dll"]
