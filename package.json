@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "npx tsx src/index.ts",
+    "start": "bash start.sh",
     "build": "echo 'No build step required for tsx'"
   },
   "dependencies": {
