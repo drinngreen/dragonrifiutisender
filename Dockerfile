@@ -55,4 +55,3 @@ ENV ASPNETCORE_URLS=http://0.0.0.0:8765
 
 # Use ENTRYPOINT to force execution of start.sh, harder to override
 ENTRYPOINT ["/app/start.sh"]
-

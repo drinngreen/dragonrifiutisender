@@ -17,6 +17,18 @@ else
     exit 1
 fi
 
+# 1.5 Copy certificates to Bridge directory
+echo "Copying certificates to Bridge directory..."
+mkdir -p /app/bridge-service/bin
+# Use absolute paths and handle potential absence
+if ls /app/src/certs/*.p12 1> /dev/null 2>&1; then
+    cp /app/src/certs/*.p12 /app/bridge-service/bin/
+    echo "✅ Certificates copied successfully."
+else
+    echo "⚠️ Warning: No .p12 files found in /app/src/certs"
+fi
+ls -la /app/bridge-service/bin/*.p12 || echo "❌ No certificates found in destination!"
+
 # 2. Start Bridge in background
 echo "Starting .NET Bridge Service..."
 cd /app/bridge-service/bin
