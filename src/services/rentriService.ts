@@ -1,6 +1,7 @@
 import https from 'https';
 import crypto from 'crypto';
 import fs from 'fs';
+import axios from 'axios'; // Top-level import
 import { RENTRI_CONFIG, CompanyKey } from '../config';
 import { buildRentriXml } from '../utils/xmlGenerator';
 import { signAgidPayload, generateAuthJwt } from '../utils/agid_v2';
@@ -26,9 +27,6 @@ async function callBridge(targetUrl: string, payload: string, company: string): 
         filename: p12Filename,
         issuer: "" // Bridge auto-detect
     };
-    
-    // Use dynamic import or require for axios to ensure it works
-    const axios = require('axios');
     
     console.log(`[RentriService] Bridge Call -> ${targetUrl} (Company: ${company})`);
     try {
