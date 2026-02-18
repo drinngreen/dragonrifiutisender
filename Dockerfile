@@ -41,9 +41,8 @@ COPY --from=node-builder /app /app
 # Copy Bridge
 COPY --from=dotnet-builder /app/bridge /app/bridge-service/bin
 
-# Copy start script
+# Copy start script (optional backup, but not used by default now)
 COPY start.sh /app/start.sh
-# Fix potential Windows line endings (CRLF -> LF)
 RUN sed -i 's/\r$//' /app/start.sh
 RUN chmod +x /app/start.sh
 
@@ -53,5 +52,5 @@ EXPOSE 3000 8765
 # Environment variables for Bridge to bind to 0.0.0.0
 ENV ASPNETCORE_URLS=http://0.0.0.0:8765
 
-# Use ENTRYPOINT to force execution of start.sh, harder to override
-ENTRYPOINT ["/app/start.sh"]
+# Default command to run Node (which will spawn Bridge)
+CMD ["npm", "start"]
