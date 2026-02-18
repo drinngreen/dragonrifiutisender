@@ -41,6 +41,21 @@ async function callBridge(targetUrl: string, payload: string, company: string): 
     } catch (error: any) {
         if (error.code === 'ECONNREFUSED') {
             console.error(`[RentriService] Bridge Connection Error: Could not connect to ${BRIDGE_URL}. Is the C# service running?`);
+            
+            // DEBUG: Try to read the bridge log file to see why it died
+            try {
+                if (fs.existsSync('/app/bridge.log')) {
+                    const logs = fs.readFileSync('/app/bridge.log', 'utf8');
+                    console.error('=== BRIDGE LOGS DUMP (Last 1000 chars) ===');
+                    console.error(logs.slice(-1000));
+                    console.error('==========================================');
+                } else {
+                    console.error('[RentriService] /app/bridge.log not found.');
+                }
+            } catch (logErr) {
+                console.error('[RentriService] Failed to read bridge logs:', logErr);
+            }
+
         } else {
             console.error(`[RentriService] Bridge Axios Error: ${error.message}`);
             if (error.response) {
