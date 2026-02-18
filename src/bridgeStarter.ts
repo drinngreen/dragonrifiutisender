@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -9,8 +9,31 @@ const __dirname = path.dirname(__filename);
 
 let bridgeProcess: any = null;
 
+// Helper to write sync status for RentriService to check
+function updateStatus(msg: string) {
+    try {
+        fs.appendFileSync('/app/bridge_status.txt', `${new Date().toISOString()} ${msg}\n`);
+    } catch (e) {
+        // Ignore write errors in dev/local
+    }
+}
+
 export function startBridge() {
     console.log('[BridgeStarter] Initializing C# Bridge Service...');
+    updateStatus('STARTING');
+
+    // 0. Verify Dotnet
+    try {
+        const check = spawnSync('dotnet', ['--info']);
+        if (check.error) {
+            console.error('[BridgeStarter] ❌ `dotnet` command not found or failed:', check.error.message);
+            updateStatus('DOTNET_MISSING');
+            return;
+        }
+        console.log('[BridgeStarter] `dotnet` command is available.');
+    } catch (e: any) {
+        console.error('[BridgeStarter] ❌ Failed to check dotnet:', e.message);
+    }
 
     // 1. Define Paths
     // In Docker: /app/bridge-service/bin/RentriBridgeService.dll
@@ -33,11 +56,13 @@ export function startBridge() {
     if (!dllPath) {
         console.error('[BridgeStarter] ❌ CRITICAL: RentriBridgeService.dll NOT FOUND!');
         console.error('[BridgeStarter] Checked paths:', possibleDllPaths);
+        updateStatus('DLL_NOT_FOUND');
         // We don't exit process here to allow Node API to still run (e.g. for health checks)
         return;
     }
 
     console.log(`[BridgeStarter] ✅ Found DLL at: ${dllPath}`);
+    updateStatus(`DLL_FOUND: ${dllPath}`);
     const bridgeDir = path.dirname(dllPath);
 
     // 2. Copy Certificates
@@ -75,6 +100,7 @@ export function startBridge() {
     };
 
     bridgeProcess = spawn('dotnet', ['RentriBridgeService.dll'], options);
+    updateStatus('SPAWNED');
 
     if (bridgeProcess.stdout) {
         bridgeProcess.stdout.on('data', (data: Buffer) => {
@@ -92,11 +118,13 @@ export function startBridge() {
 
     bridgeProcess.on('close', (code: number) => {
         console.log(`[BridgeStarter] Bridge process exited with code ${code}`);
+        updateStatus(`EXITED: ${code}`);
         // Optional: Restart logic could go here
     });
 
     bridgeProcess.on('error', (err: Error) => {
         console.error(`[BridgeStarter] Failed to start bridge process: ${err.message}`);
+        updateStatus(`ERROR: ${err.message}`);
     });
 
     if (bridgeProcess.pid) {
