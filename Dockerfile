@@ -43,6 +43,8 @@ COPY --from=dotnet-builder /app/bridge /app/bridge-service/bin
 
 # Copy start script
 COPY start.sh /app/start.sh
+# Fix potential Windows line endings (CRLF -> LF)
+RUN sed -i 's/\r$//' /app/start.sh
 RUN chmod +x /app/start.sh
 
 # Expose ports (Node + Bridge)

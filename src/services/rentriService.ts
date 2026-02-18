@@ -35,12 +35,20 @@ async function callBridge(targetUrl: string, payload: string, company: string): 
             const innerData = typeof res.data.data === 'string' ? JSON.parse(res.data.data) : res.data.data;
             return innerData;
         } else {
+            console.error('[RentriService] Bridge Error Response:', JSON.stringify(res.data));
             throw new Error(`Bridge Error: ${JSON.stringify(res.data)}`);
         }
     } catch (error: any) {
-        console.error(`[RentriService] Bridge Connection Error: ${error.message}`);
-        if (error.response) console.error(`[RentriService] Bridge Details:`, error.response.data);
-        throw error;
+        if (error.code === 'ECONNREFUSED') {
+            console.error(`[RentriService] Bridge Connection Error: Could not connect to ${BRIDGE_URL}. Is the C# service running?`);
+        } else {
+            console.error(`[RentriService] Bridge Axios Error: ${error.message}`);
+            if (error.response) {
+                console.error(`[RentriService] Status: ${error.response.status}`);
+                console.error(`[RentriService] Data:`, JSON.stringify(error.response.data));
+            }
+        }
+        throw new Error(`Bridge Call Failed: ${error.message}`);
     }
 }
 
