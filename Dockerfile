@@ -53,4 +53,6 @@ EXPOSE 3000 8765
 # Environment variables for Bridge to bind to 0.0.0.0
 ENV ASPNETCORE_URLS=http://0.0.0.0:8765
 
-CMD ["./start.sh"]
+# Use ENTRYPOINT to force execution of start.sh, harder to override
+ENTRYPOINT ["/app/start.sh"]
+
