@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { rentriRouter } from './routers/rentri';
 import dotenv from 'dotenv';
-import { startBridge } from './bridgeStarter'; // Import Bridge Starter
+// import { startBridge } from './bridgeStarter'; // REMOVED: Using concurrently now
 
 dotenv.config();
 
@@ -10,7 +10,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // 0. Start C# Bridge Service (Sidecar)
-startBridge();
+// startBridge(); // REMOVED
 
 // 1. Basic Middleware
 app.use(cors({

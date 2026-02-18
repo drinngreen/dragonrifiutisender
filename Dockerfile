@@ -2,13 +2,10 @@
 FROM node:20-bullseye as node-builder
 WORKDIR /app
 COPY package*.json ./
-# Use --include=dev to ensure tsx and typescript are installed even if NODE_ENV is production
-# Or use 'npm ci' if package-lock is present
+# Install dependencies including concurrently
 RUN npm install --include=dev
 
 COPY . .
-# If you have a build step for frontend, uncomment below
-# RUN npm run build 
 
 # Stage 2: Build .NET Bridge
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS dotnet-builder
@@ -32,7 +29,7 @@ RUN apt-get update && \
     apt-get update && \
     apt-get install -y dotnet-runtime-8.0 aspnetcore-runtime-8.0
 
-# Install tsx globally to avoid permission issues with local node_modules
+# Install tsx globally
 RUN npm install -g tsx
 
 # Copy Node app
@@ -41,16 +38,16 @@ COPY --from=node-builder /app /app
 # Copy Bridge
 COPY --from=dotnet-builder /app/bridge /app/bridge-service/bin
 
-# Copy start script (optional backup, but not used by default now)
-COPY start.sh /app/start.sh
-RUN sed -i 's/\r$//' /app/start.sh
-RUN chmod +x /app/start.sh
+# *** CRITICAL: Copy Certificates directly during build ***
+# This ensures they exist where the bridge expects them
+COPY src/certs/*.p12 /app/bridge-service/bin/
 
 # Expose ports (Node + Bridge)
 EXPOSE 3000 8765
 
-# Environment variables for Bridge to bind to 0.0.0.0
+# Environment variables
 ENV ASPNETCORE_URLS=http://0.0.0.0:8765
+ENV PORT=3000
 
-# Default command to run Node (which will spawn Bridge)
+# Start both services using concurrently defined in package.json
 CMD ["npm", "start"]
