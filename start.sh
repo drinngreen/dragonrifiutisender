@@ -12,7 +12,8 @@ sleep 5
 # Start Node App
 echo "Starting Node.js Application..."
 cd /app
-npx tsx index_clean.ts &
+# Use global tsx directly, assuming src/index.ts is the entry point
+tsx src/index.ts &
 NODE_PID=$!
 
 # Wait for any process to exit

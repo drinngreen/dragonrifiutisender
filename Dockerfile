@@ -24,7 +24,6 @@ FROM node:20-bullseye
 WORKDIR /app
 
 # Install .NET Runtime dependencies and Runtime itself
-# Microsoft package repository setup for Debian 11 (Bullseye)
 RUN apt-get update && \
     apt-get install -y wget && \
     wget https://packages.microsoft.com/config/debian/11/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
@@ -33,7 +32,10 @@ RUN apt-get update && \
     apt-get update && \
     apt-get install -y dotnet-runtime-8.0 aspnetcore-runtime-8.0
 
-# Copy Node app (including node_modules with dev deps if needed for tsx)
+# Install tsx globally to avoid permission issues with local node_modules
+RUN npm install -g tsx
+
+# Copy Node app
 COPY --from=node-builder /app /app
 
 # Copy Bridge
